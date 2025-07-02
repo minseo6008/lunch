@@ -1,0 +1,187 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>급식표 슬라이더</title>
+  <style>
+    #slider-controls {
+      text-align: center;
+      padding: 16px 0;
+      background: #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    }
+    #slider-controls button {
+      font-size: 1.5rem;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px 12px;
+    }
+    #slider-controls button:disabled {
+      opacity: 0.3;
+      cursor: default;
+    }
+
+    #lunch-container {
+      display: flex;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      -webkit-overflow-scrolling: touch;
+      padding: 16px;
+      box-sizing: border-box;
+      background: #fff;
+    }
+
+    .meal-box {
+      position: relative;
+      flex: 0 0 107%;
+      scroll-snap-align: start;
+      margin-right: 16px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      /* 상단 패딩 = 메뉴 baseline(약 54px) + 레이블 올린 값(140px) */
+      padding: 5px 30px 12px; /*수정함*/
+      background: #fafafa;
+      box-sizing: border-box;
+    }
+    .meal-box h1 {
+      margin: 0 0 8px;
+      font-size: 1.1em;
+      color: #333;
+      position: relative;
+      z-index: 2;
+    }
+
+    .detail-meal-box {
+      display: flex;
+      align-items: flex-start;
+      margin: 4px 0;
+      position: relative;
+      min-height: 1.4em;
+    }
+    .meal-period {
+      flex: none;
+      width: 60px;
+      font-weight: bold;
+      position: absolute;
+      left: 0;
+      z-index: 1;
+    }
+    .menu-text {
+      flex: 1;
+      margin-left: 60px;
+      line-height: 1.4em;
+    }
+
+    .detail-meal-box.lunch .meal-period,
+    .detail-meal-box.dinner .meal-period {
+      top: calc(1.4em + 54px - 80px);
+      /* 기존 (1.4em + 54px - 140px) 에서 60px 내린 상태 */
+    }
+
+    .error {
+      color: red;
+      text-align: center;
+      margin: 2em 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="slider-controls">
+    <button id="prev-btn">◀</button>
+    <button id="next-btn">▶</button>
+  </div>
+
+  <div id="lunch-container">로딩 중…</div>
+  <div id="error" class="error"></div>
+
+  <script>
+    // ─ 설정 ─
+    const ATPT_OFCDC_SC_CODE = "I10";
+    const SD_SCHUL_CODE      = "9300219";
+    const API_KEY            = "f1c23612b62a42308870c8ab469a16e8";
+
+    function formatYYYYMMDD(date) {
+      const y = date.getFullYear();
+      const m = String(date.getMonth()+1).padStart(2,"0");
+      const d = String(date.getDate()).padStart(2,"0");
+      return `${y}${m}${d}`;
+    }
+    function formatKorean(yyyymmdd) {
+      const y = +yyyymmdd.slice(0,4);
+      const m = +yyyymmdd.slice(4,6)-1;
+      const d = +yyyymmdd.slice(6,8);
+      const dt = new Date(y,m,d);
+      const w = ["일","월","화","수","목","금","토"];
+      return `${m+1}월 ${d}일 ${w[dt.getDay()]}요일`;
+    }
+
+    async function fetchMealData() {
+      const from = new Date();
+      const to   = new Date();
+      to.setDate(to.getDate() + 20);
+      const url = `https://open.neis.go.kr/hub/mealServiceDietInfo?Type=json`
+        + `&ATPT_OFCDC_SC_CODE=${ATPT_OFCDC_SC_CODE}`
+        + `&SD_SCHUL_CODE=${SD_SCHUL_CODE}`
+        + `&MLSV_FROM_YMD=${formatYYYYMMDD(from)}`
+        + `&MLSV_TO_YMD=${formatYYYYMMDD(to)}`
+        + `&KEY=${API_KEY}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`API 요청 실패 (${res.status})`);
+      const data = await res.json();
+      if (!data.mealServiceDietInfo?.[1]) throw new Error("급식 정보가 없습니다.");
+      return data.mealServiceDietInfo[1].row;
+    }
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      const container = document.getElementById("lunch-container");
+      const errorBox  = document.getElementById("error");
+      const prevBtn   = document.getElementById("prev-btn");
+      const nextBtn   = document.getElementById("next-btn");
+
+      function updateButtons() {
+        prevBtn.disabled = container.scrollLeft === 0;
+        nextBtn.disabled = container.scrollLeft + container.clientWidth >= container.scrollWidth;
+      }
+      prevBtn.addEventListener("click", () =>
+        container.scrollBy({ left: -container.clientWidth, behavior: "smooth" })
+      );
+      nextBtn.addEventListener("click", () =>
+        container.scrollBy({ left:  container.clientWidth, behavior: "smooth" })
+      );
+      container.addEventListener("scroll", updateButtons);
+
+      try {
+        const rows = await fetchMealData();
+        const days = [];
+        rows.forEach(item => {
+          let d = days.find(x => x.ymd === item.MLSV_YMD);
+          if (!d) days.push(d = { ymd: item.MLSV_YMD });
+          const t = item.MMEAL_SC_NM.trim();
+          if      (t === "조식") d.breakfast = item.DDISH_NM;
+          else if (t === "중식") d.lunch     = item.DDISH_NM;
+          else if (t === "석식") d.dinner    = item.DDISH_NM;
+        });
+        days.sort((a,b) => a.ymd.localeCompare(b.ymd));
+
+        container.innerHTML = "";
+        days.forEach(d => {
+          container.insertAdjacentHTML("beforeend", `
+            <div class="meal-box">
+              <h1>${formatKorean(d.ymd)}</h1>
+              ${d.breakfast ? `<div class="detail-meal-box"><span class="meal-period">조식</span><span class="menu-text">${d.breakfast}</span></div>` : ""}
+              ${d.lunch     ? `<div class="detail-meal-box lunch"><span class="meal-period">중식</span><span class="menu-text">${d.lunch}</span></div>`     : ""}
+              ${d.dinner    ? `<div class="detail-meal-box dinner"><span class="meal-period">석식</span><span class="menu-text">${d.dinner}</span></div>`   : ""}
+            </div>
+          `);
+        });
+        updateButtons();
+      } catch (e) {
+        container.innerHTML = "";
+        errorBox.textContent = e.message;
+      }
+    });
+  </script>
+</body>
+</html>
